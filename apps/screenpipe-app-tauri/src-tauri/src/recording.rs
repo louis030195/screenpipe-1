@@ -310,8 +310,26 @@ pub async fn spawn_screenpipe(
 
     // Check permissions before starting
     let permissions_check = do_permissions_check(false);
-    let store = SettingsStore::get(&app).ok().flatten().unwrap_or_default();
+    let mut store = SettingsStore::get(&app).ok().flatten().unwrap_or_default();
     let disable_audio = store.recording.disable_audio;
+
+    // Safety guard: prevent parakeet/parakeet-mlx on platforms where it crashes
+    let tier = store
+        .recording
+        .device_tier
+        .as_deref()
+        .and_then(screenpipe_config::DeviceTier::from_str_loose)
+        .unwrap_or_else(screenpipe_config::detect_tier);
+    if screenpipe_config::is_engine_unsafe(&store.recording.audio_transcription_engine, tier) {
+        let safe = screenpipe_config::best_engine_for_platform(tier);
+        warn!(
+            "engine {} is unsafe on this platform — switching to {} before starting server",
+            store.recording.audio_transcription_engine, safe
+        );
+        store.recording.audio_transcription_engine = safe.to_string();
+        // Persist so the UI reflects the corrected engine
+        let _ = store.save(&app);
+    }
 
     // Screen recording permission is required
     if !permissions_check.screen_recording.permitted() {
